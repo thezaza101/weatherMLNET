@@ -38,6 +38,10 @@ namespace weatherMLNET
     {
         [ColumnName("PredictedLabel")]
         public bool PredictedLabel;
+        public float Probability { get; set; }
+
+
+        public float Score { get; set; }
     }
 
 
@@ -85,8 +89,9 @@ namespace weatherMLNET
         {
             //by default the 'Label' column is considered to be the prediction target
             //Map the 'Species' column to the 'Label' column
-            _pipeline = _mlContext.Transforms.Conversion.MapValueToKey(inputColumnName:"RainTomorrow", outputColumnName:"Label")
-            .Append(_mlContext.Transforms.Text.FeaturizeText(inputColumnName: "WindDir3Pm", outputColumnName: "WindDir3PmFeature"))
+            _pipeline = _mlContext.Transforms.CopyColumns(outputColumnName: "Label", inputColumnName:"RainTomorrow")
+            .Append(_mlContext.Transforms.Categorical.OneHotEncoding(inputColumnName: "WindDir3Pm", outputColumnName: "WindDir3PmFeature"))
+          
             //Set the features to be used 
             .Append(_mlContext.Transforms.Concatenate("Features", "RainfallMM", "Humidity3Pm", "CloudOktas3Pm", "WindSpeed3Pm","WindDir3PmFeature","MSLPressure3Pm"))
             //cache the pipeline, this will make downstream processes faster
@@ -98,35 +103,52 @@ namespace weatherMLNET
         {
             //we can use the Stochastic Dual Coordinate Ascent (SDCA) maximum entropy classification model for our predictions
             //_pipeline = _pipeline.Append(_mlContext.MulticlassClassification.Trainers.SdcaMaximumEntropy(labelColumnName: "Label", featureColumnName: "Features"))
-            _pipeline = _pipeline.Append(_mlContext.MulticlassClassification.Trainers.LbfgsMaximumEntropy(labelColumnName: "Label", featureColumnName: "Features"))
+            //_pipeline = _pipeline.Append(_mlContext.MulticlassClassification.Trainers.LbfgsMaximumEntropy(labelColumnName: "Label", featureColumnName: "Features"))
             //_pipeline = _pipeline.Append(_mlContext.MulticlassClassification.Trainers.NaiveBayes(labelColumnName: "Label", featureColumnName: "Features"))
             
-            //_pipeline = _pipeline.Append(_mlContext.BinaryClassification.Trainers.LbfgsLogisticRegression(labelColumnName: "Label", featureColumnName: "Features"))            
+            _pipeline = _pipeline.Append(_mlContext.BinaryClassification.Trainers.LbfgsLogisticRegression(labelColumnName: "Label", featureColumnName: "Features"));            
             //_pipeline = _pipeline.Append(_mlContext.BinaryClassification.Trainers.FastForest(labelColumnName: "Label", featureColumnName: "Features"))            
-            //_pipeline = _pipeline.Append(_mlContext.BinaryClassification.Trainers.FastTree(labelColumnName: "Label", featureColumnName: "Features"))            
+            //_pipeline = _pipeline.Append(_mlContext.BinaryClassification.Trainers.FastTree());            
             
             //Map the output to the PredictedLabel 
-            .Append(_mlContext.Transforms.Conversion.MapKeyToValue("PredictedLabel"));
+            //.Append(_mlContext.Transforms.Conversion.MapKeyToValue("PredictedLabel"));
 
             //Train the model
             _model = _pipeline.Fit(_trainData);
+
+            /*var txData = _model.Transform(_trainData);
+            var x = txData.Schema;
+
+            var featureColumns = txData.GetColumn<Single>(x[0]);
+            foreach (var y in featureColumns)
+            {
+                System.Console.WriteLine(y);
+            } */
         }
 
         //Evaluate the performance of the model
         public void EvaluateModel() 
         {
-            //var testMetrics = _mlContext.BinaryClassification.Evaluate(_model.Transform(_testData));
-            //System.Console.WriteLine($"Accuracy: {testMetrics.Accuracy:0.###}");
-            //System.Console.WriteLine($"AUC: {testMetrics.AreaUnderRocCurve:0.###}");
-            var testMetrics = _mlContext.MulticlassClassification.Evaluate(_model.Transform(_testData));
-            System.Console.WriteLine($"Micro Accuracy: {testMetrics.MicroAccuracy:0.###}");
-            System.Console.WriteLine($"Macro Accuracy: {testMetrics.MacroAccuracy:0.###}");
+            var testMetrics = _mlContext.BinaryClassification.Evaluate(_model.Transform(_testData));
+            System.Console.WriteLine($"Accuracy: {testMetrics.Accuracy:0.###}");
+            System.Console.WriteLine($"AUC: {testMetrics.AreaUnderRocCurve:0.###}");
+            //var testMetrics = _mlContext.MulticlassClassification.Evaluate(_model.Transform(_testData));
+            //System.Console.WriteLine($"Micro Accuracy: {testMetrics.MicroAccuracy:0.###}");
+            //System.Console.WriteLine($"Macro Accuracy: {testMetrics.MacroAccuracy:0.###}");
         }
 
         //Save the model to file
         public void SaveModelToFile(string pathToFile)
         {
-
+            using (var fs = new FileStream(_modelPath, FileMode.Create, FileAccess.Write, FileShare.Write))
+            {
+                _mlContext.Model.Save(_model,_trainData.Schema, fs);
+            }
+        }
+        public void Predict(WeatherData wd)
+        {
+            System.Console.WriteLine("Predicting using trained model");
+            System.Console.WriteLine(_mlContext.Model.CreatePredictionEngine<WeatherData, RainPrediction>(_model).Predict(wd).PredictedLabel);
         }
     }
 }
